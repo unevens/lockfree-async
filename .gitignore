@@ -1,0 +1,6 @@
+.DS_Stor*
+.vs
+.vscode
+out
+doc
+build
