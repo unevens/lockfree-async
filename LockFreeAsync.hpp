@@ -451,8 +451,8 @@ public:
   void setTimerPeriod(int period)
   {
     timerPeriod = period;
-    for (auto& Getter : blockingGetters) {
-      Getter.timerPeriod = period;
+    for (auto& getter : blockingGetters) {
+      getter.timerPeriod = period;
     }
   }
 
