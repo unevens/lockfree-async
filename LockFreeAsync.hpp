@@ -274,20 +274,20 @@ private:
 
   void timerCallback()
   {
-    for (auto& Getter : getters) {
-      Getter->cleanup();
+    for (auto& getter : getters) {
+      getter->cleanup();
     }
     bool anyChange = handleMessages();
     if (anyChange) {
       if (onChange) {
         onChange(storedObject);
       }
-      for (auto& Getter : getters) {
-        Getter->onChange(storedObject);
+      for (auto& getter : getters) {
+        getter->onChange(storedObject);
       }
     }
-    for (auto& Getter : blockingGetters) {
-      Getter->handleRequests(storedObject);
+    for (auto& getter : blockingGetters) {
+      getter->handleRequests(storedObject);
     }
     for (auto& buffer : buffers) {
       buffer->maintenance();
