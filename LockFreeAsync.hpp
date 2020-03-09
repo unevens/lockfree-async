@@ -312,7 +312,7 @@ public:
    by the timerCallback).
    * @param message the message to send.
    */
-  void submitMessage(Message message) { messenger.send(std::move(message)); }
+  void submitMessage(Message&& message) { messenger.send(std::move(message)); }
 
   /**
    * Requests an Getter. This should not be called while the Async's timer

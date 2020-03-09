@@ -205,7 +205,7 @@ public:
    * available, otherwise it allocates a new one.
    * @param message the massage to send.
    */
-  void send(T message)
+  void send(T&& message)
   {
     auto node = storage.pop_all();
     bool fromStorage = true;
