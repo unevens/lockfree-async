@@ -25,12 +25,9 @@ SOFTWARE.
 #include "QwMpmcPopAllLifoStack.h"
 #include <algorithm>
 #include <atomic>
-#include <boost/align.hpp>
 #include <cassert>
-#include <climits>
 #include <functional>
 #include <memory>
-#include <vector>
 
 namespace lockfree {
 

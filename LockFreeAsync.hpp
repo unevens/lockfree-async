@@ -471,12 +471,12 @@ public:
    * @param messageInitialzier functor to initialize the preallocated nodes.
    */
   explicit Async(
-    ClassToStore storedObject,
-    std::function<void(ClassToStore&)> onChange = nullptr,
+    TClassToStore storedObject,
+    std::function<void(TClassToStore&)> onChange = nullptr,
     int timerPeriod = 50,
     int numNodesToPreallocate = 32,
     std::function<Message(void)> messageInitialzier =
-      [] { return Async<TClassToStore>::Message(); })
+      [] { return Message(); })
     : storedObject{ std::move(storedObject) }
     , onChange{ onChange }
     , timerPeriod{ timerPeriod }
