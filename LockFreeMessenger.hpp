@@ -198,8 +198,8 @@ public:
   void send(MessageNode<T>* node) { lifo.push(node); }
 
   /**
-   * Sends a Message, wrapping in MessageNode from the storage if it is
-   * available, otherwise it allocates a new one.
+   * Sends a Message, wrapping in a MessageNode from the storage if there is
+   * one available, otherwise it allocates a new one.
    * @param message the massage to send.
    */
   void send(T&& message)
@@ -308,10 +308,25 @@ public:
     recycle(head);
   }
 
+  void discardAllMessages()
+  {
+      recycle(lifo.pop_all());
+  }
+
+  void freeStorage()
+  {
+      freeMessageStack(storage.pop_all());
+  }
+
+  void discardAndFreeAllMessages()
+  {
+      freeMessageStack(lifo.pop_all());
+  }
+
   ~Messenger()
   {
-    freeMessageStack(lifo.pop_all());
-    freeMessageStack(storage.pop_all());
+    discardAndFreeAllMessages();
+    freeStorage();
   }
 };
 
