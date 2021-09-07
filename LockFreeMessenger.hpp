@@ -222,6 +222,31 @@ public:
   }
 
   /**
+   * Sends a Message, wrapping in a MessageNode from the storage if there is
+   * one available, otherwise it does not send the messate and returns false.
+   * @param message the massage to send.
+   * @return true if the message was sent, false if it was not sent
+   */
+  bool send(T&& message)
+  {
+    auto node = storage.pop_all();
+    bool fromStorage = true;
+    if (!node) {
+      return false;
+    }
+    else {
+      node->set(std::move(message));
+      auto next = node->next();
+      node->next() = nullptr;
+      if (next) {
+        storage.push_multiple(next, next->last());
+      }
+    }
+    lifo.push(node);
+    return true;
+  }
+
+  /**
    * Receives the message that was sent for last. Non blocking. If there is any
    * message not yet received, "ReceiveLast" will move the one that was sent for
    * last to its argument, and return true; otherwise it will return false.
@@ -291,7 +316,7 @@ public:
    */
   void preallocateNodes(
     int numNodesToPreallocate,
-    std::function<T(void)> initializer = [] { return T(); })
+    std::function<T(void)> initializer = [] { return T{}; })
   {
     MessageNode<T>* head = nullptr;
     MessageNode<T>* it = nullptr;
@@ -308,20 +333,11 @@ public:
     recycle(head);
   }
 
-  void discardAllMessages()
-  {
-      recycle(lifo.pop_all());
-  }
+  void discardAllMessages() { recycle(lifo.pop_all()); }
 
-  void freeStorage()
-  {
-      freeMessageStack(storage.pop_all());
-  }
+  void freeStorage() { freeMessageStack(storage.pop_all()); }
 
-  void discardAndFreeAllMessages()
-  {
-      freeMessageStack(lifo.pop_all());
-  }
+  void discardAndFreeAllMessages() { freeMessageStack(lifo.pop_all()); }
 
   ~Messenger()
   {
@@ -373,7 +389,7 @@ public:
   MessageBuffer(
     int desiredBufferSize,
     int minSize,
-    std::function<T(void)> initializer = [] { return T(); })
+    std::function<T(void)> initializer = [] { return T{}; })
     : desiredBufferSize{ desiredBufferSize }
     , actualSize{ 0 }
     , minSize{ minSize }
