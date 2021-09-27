@@ -223,11 +223,11 @@ public:
 
   /**
    * Sends a Message, wrapping in a MessageNode from the storage if there is
-   * one available, otherwise it does not send the messate and returns false.
+   * one available, otherwise it does not send the message and returns false.
    * @param message the massage to send.
    * @return true if the message was sent, false if it was not sent
    */
-  bool send(T&& message)
+  bool sendIfNodeAvailable(T&& message)
   {
     auto node = storage.pop_all();
     bool fromStorage = true;
