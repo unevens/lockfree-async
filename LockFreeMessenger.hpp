@@ -28,6 +28,7 @@ SOFTWARE.
 #include <cassert>
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace lockfree {
 
@@ -149,7 +150,7 @@ handleMessageStack(MessageNode<T>* head, Action action)
   // and we loop from the new head (which is the last node of the lifo stack)
   // using the prev pointer
   while (head) {
-    action(head);
+    action(head->get());
     head = head->prev();
   }
 }
@@ -194,6 +195,8 @@ public:
   /**
    * Sends a message already wrapped in a MessageNode. Non-blocking.
    * @param node the massage node to send.
+   * @return true if the message was sent using an already allocated node, false
+   * if a node was allocated
    */
   void send(MessageNode<T>* node) { lifo.push(node); }
 
@@ -202,7 +205,7 @@ public:
    * one available, otherwise it allocates a new one.
    * @param message the massage to send.
    */
-  void send(T&& message)
+  bool send(T&& message)
   {
     auto node = storage.pop_all();
     bool fromStorage = true;
@@ -219,6 +222,7 @@ public:
       }
     }
     lifo.push(node);
+    return fromStorage;
   }
 
   /**
@@ -264,6 +268,17 @@ public:
     message = std::move(head->get());
     storage.push_multiple(head, head->last());
     return true;
+  }
+
+  std::optional<T> receiveLastMessage()
+  {
+    MessageNode<T>* head = lifo.pop_all();
+    if (!head) {
+      return std::nullopt;
+    }
+    auto message = std::optional<T>(std::move(head->get()));
+    storage.push_multiple(head, head->last());
+    return message;
   }
 
   /**
@@ -353,6 +368,7 @@ public:
  * std::function<void(MessageNode<T>)>
  * @param messenger the messenger to receive the messages from
  * @param action the functor to call on the received nodes
+ * @return the number of handled messages
  */
 template<typename T, class Action>
 inline int

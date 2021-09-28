@@ -265,8 +265,7 @@ private:
   bool handleMessages()
   {
     int numMessages = receiveAndHandleMessageStack(
-      messenger, [&](MessageNode<Message>* messageNode) {
-        auto message = std::move(messageNode->get());
+      messenger, [&](Message& message) {
         message(storedObject);
       });
     return numMessages > 0;
