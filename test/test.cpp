@@ -38,11 +38,11 @@ public:
   {}
 };
 
-static_assert(std::is_move_constructible<Object>::value, "Object should be noexcept move constructible");
+static_assert(std::is_move_constructible<Object>::value, "Object should be noexcept move constructable");
 
 static_assert(std::is_move_assignable<Object>::value, "Object should be noexcept move assignable");
 
-static_assert(std::is_copy_constructible<Object>::value, "Object should be move constructible");
+static_assert(std::is_copy_constructible<Object>::value, "Object should be move constructable");
 
 static_assert(std::is_copy_assignable<Object>::value, "Object should be move assignable");
 
