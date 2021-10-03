@@ -124,13 +124,12 @@ public:
 
   ~AsyncThread()
   {
-    stopTimer();
+    stop();
     for (auto asyncObject : asyncObjects)
       removeObject(*asyncObject);
   }
 
 private:
-  std::mutex& getMutex() { return mutex; }
   std::unordered_set<AsyncInterface*> asyncObjects;
   std::thread timer;
   std::atomic<bool> stopTimerFlag{ false };
@@ -194,8 +193,8 @@ public:
 
     ~InstanceAccess()
     {
-      if (asyncThread) {
-        auto const lock = std::lock_guard<std::mutex>(asyncThread->getMutex());
+      if (async.asyncThread) {
+        auto const lock = std::lock_guard<std::mutex>(async.getMutex());
         async.removeInstance(instance);
       }
       else {
@@ -218,7 +217,7 @@ public:
   std::unique_ptr<InstanceAccess> requestInstance()
   {
     if (asyncThread) {
-      auto const lock = std::lock_guard<std::mutex>(asyncThread->getMutex());
+      auto const lock = std::lock_guard<std::mutex>(getMutex());
       return createInstance();
     }
     else {
@@ -255,8 +254,8 @@ private:
   void removeInstance(Instance* instance)
   {
     auto it =
-      std::find_if(instances.begin(), instances.end(), [](auto& instance) {
-        return instace.get() == instanceAccess.instanceAddress;
+      std::find_if(instances.begin(), instances.end(), [instance](auto& instance_) {
+        return instance_.get() == instance;
       });
     assert(it != instances.end());
     if (it == instances.end())
@@ -273,7 +272,6 @@ private:
 
   void timerCallback() override
   {
-    auto const numObjects = objects.size();
     for (auto& instance : instances) {
       freeMessageStack(instance->fromInstance.receiveAllNodes());
     }
