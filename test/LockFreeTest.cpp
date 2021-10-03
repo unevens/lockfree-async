@@ -49,8 +49,8 @@ static_assert(std::is_copy_constructible<Backend>::value,
 static_assert(std::is_copy_assignable<Backend>::value,
               "Backend should be move assignable");
 
-using Async = lockfree::Async<Backend>;
-using Message = Async::Message;
+using Async = lockfree::Async<Backend, Backend>;
+using Message = Async::ChangeSettings;
 
 int
 main()
@@ -75,7 +75,7 @@ main()
   auto stateChangingThread = std::thread([&] {
     while (runStateChangingThread) {
       std::cout << "sending message from state changing thread\n";
-      asyncBackend.submitMessage(
+      asyncBackend.submitChange(
         Message([](Backend& backend) { backend.incrementState(); }));
       std::this_thread::sleep_for(
         std::chrono::milliseconds(stateChangePeriodMs));
