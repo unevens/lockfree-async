@@ -33,11 +33,6 @@ public:
   {
     return state;
   };
-  void incrementState(int amount = 1)
-  {
-    std::cout << "Object::incrementState prev amount = " << state << "\n";
-    state += amount;
-  }
   explicit Object(int state = 0)
     : state(state)
   {}
@@ -52,7 +47,7 @@ static_assert(std::is_copy_constructible<Object>::value, "Object should be move 
 static_assert(std::is_copy_assignable<Object>::value, "Object should be move assignable");
 
 using namespace lockfree;
-using AsyncBackend = Async<Object, Object>;
+using AsyncObject = Async<Object, int>;
 
 int main()
 {
@@ -62,7 +57,7 @@ int main()
 
   auto asyncThread = AsyncThread(serverUpdatePeriodMs);
 
-  auto asyncObjecct = AsyncBackend(Object{});
+  auto asyncObjecct = AsyncObject(0);
   asyncObjecct.preallocateNodes(1024);
   asyncThread.addObject(asyncObjecct);
   asyncThread.start();
@@ -71,8 +66,10 @@ int main()
   auto makeStateChangingThread = [&] {
     std::thread([&] {
       while (runStateChangingThread) {
-        bool const sent =
-          asyncObjecct.submitChange(AsyncBackend::ChangeSettings([](Object& backend) { backend.incrementState(); }));
+        bool const sent = asyncObjecct.submitChange(AsyncObject::ChangeSettings([](int& state) {
+          std::cout << "incrementing state. prev amount = " << state << "\n";
+          state += 1;
+        }));
         std::cout << "sending message from state changing thread: " << (sent ? "success" : "failure") << "\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(stateChangePeriodMs));
       }
@@ -86,8 +83,8 @@ int main()
       auto instance = asyncObjecct.requestInstance();
       while (runGetterThreads) {
         instance->update();
-        Object& backend = instance->get();
-        std::cout << "from access point thread: " << backend.getState() << "\n";
+        Object& object = instance->get();
+        std::cout << "from access point thread: " << object.getState() << "\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(getterPeriodMs));
       }
       std::cout << "access point thread stopped.\n";
@@ -110,7 +107,7 @@ int main()
   runStateChangingThread = false;
   runGetterThreads = false;
 
-  std::cout << "stopping asyncBackend\n";
+  std::cout << "stopping async thread\n";
   asyncThread.stop();
   std::cout << "asyncThread stopped\n";
   return 0;
