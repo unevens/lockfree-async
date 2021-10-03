@@ -1,7 +1,7 @@
 # lockfree-async
 
 [lockfree-async](https://github.com/unevens/lockfree-async) is a C++ header-only simple template library for lock-free
-inter-thread communication.
+inter-thread communication and sharing of resources.
 
 The fundamental building block of this library is the "IMB Freelist" multiple-producer multiple-consumer LIFO stack, as
 implemented by Ross Bencina in [Queue World](https://github.com/RossBencina/QueueWorld).
