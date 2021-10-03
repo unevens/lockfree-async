@@ -69,4 +69,4 @@ private:
   std::atomic<Object*> currentObjectPtr{ nullptr };
 };
 
-} // namespace unplug
+} // namespace lockfree

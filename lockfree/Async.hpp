@@ -28,6 +28,7 @@ SOFTWARE.
 #include <thread>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace lockfree {
 
@@ -41,7 +42,10 @@ public:
 protected:
   virtual void timerCallback() = 0;
   class AsyncThread* asyncThread{ nullptr };
-  void setAsyncThread(AsyncThread* asyncThread_) { asyncThread = asyncThread_; }
+  void setAsyncThread(AsyncThread* asyncThread_)
+  {
+    asyncThread = asyncThread_;
+  }
   std::mutex& getMutex();
 };
 
@@ -70,20 +74,20 @@ public:
 
   void start()
   {
-    auto const lock = std::lock_guard<std::mutex>(mutex);
-    if (isRunningFlag) {
+    if (isRunningFlag.load(std::memory_order_acquire)) {
       return;
     }
-    stopTimerFlag = false;
+    stopTimerFlag.store(false, std::memory_order_release);
+    isRunningFlag.store(true, std::memory_order_release);
     timer = std::thread([this]() {
       while (true) {
         for (auto asyncObject : asyncObjects)
           asyncObject->timerCallback();
-        if (stopTimerFlag) {
+        if (stopTimerFlag.load(std::memory_order_acquire)) {
           return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(timerPeriod));
-        if (stopTimerFlag) {
+        if (stopTimerFlag.load(std::memory_order_acquire)) {
           return;
         }
       }
@@ -92,12 +96,11 @@ public:
 
   void stop()
   {
-    auto const lock = std::lock_guard<std::mutex>(mutex);
-    stopTimerFlag = true;
+    stopTimerFlag.store(true, std::memory_order_release);
     if (timer.joinable()) {
       timer.join();
     }
-    isRunningFlag = false;
+    isRunningFlag.store(false, std::memory_order_release);
   }
 
   /**
@@ -105,7 +108,6 @@ public:
    */
   void setTimerPeriod(int period)
   {
-    auto const lock = std::lock_guard<std::mutex>(mutex);
     timerPeriod.store(period, std::memory_order_release);
   }
 
@@ -126,7 +128,7 @@ public:
   {
     stop();
     for (auto asyncObject : asyncObjects)
-      removeObject(*asyncObject);
+      asyncObject->setAsyncThread(nullptr);
   }
 
 private:
@@ -138,39 +140,35 @@ private:
   std::mutex mutex;
 };
 
-inline std::mutex&
-AsyncInterface::getMutex()
+inline std::mutex& AsyncInterface::getMutex()
 {
   return asyncThread->mutex;
 }
 
-template<class TObject,
-         class TObjectSettings,
-         size_t ChangeFunctorClosureCapacity = 32>
+template<class TObject, class TObjectSettings, size_t ChangeFunctorClosureCapacity = 32>
 class Async final : public AsyncInterface
 {
 public:
   using ObjectSettings = TObjectSettings;
   using Object = TObject;
-  using ChangeSettings = stdext::inplace_function<void(ObjectSettings&),
-                                                  ChangeFunctorClosureCapacity>;
+  using ChangeSettings = stdext::inplace_function<void(ObjectSettings&), ChangeFunctorClosureCapacity>;
 
 private:
   struct Instance final
   {
     std::unique_ptr<Object> object;
-    Messenger<Object> toInstance;
-    Messenger<Object> fromInstance;
+    Messenger<std::unique_ptr<Object>> toInstance;
+    Messenger<std::unique_ptr<Object>> fromInstance;
 
     explicit Instance(ObjectSettings& objectSettings)
-      : object{ objectSettings }
+      : object{ std::make_unique<Object>(objectSettings) }
     {}
   };
 
 public:
   class InstanceAccess final
   {
-    template<class TObject_, class TObjectSettings_>
+    template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
     friend class Async;
 
   public:
@@ -187,9 +185,15 @@ public:
       return false;
     }
 
-    Object& get() { return instance->object; }
+    Object& get()
+    {
+      return *(instance->object);
+    }
 
-    Object const& get() const { return instance->object; }
+    Object const& get() const
+    {
+      return instance->object;
+    }
 
     ~InstanceAccess()
     {
@@ -225,11 +229,14 @@ public:
     }
   }
 
-  bool submitChange(ChangeSettings&& change) { return messenger.send(change); }
-
-  bool submitChangeIfNodeAvailable(ChangeSettings&& change)
+  bool submitChange(ChangeSettings change)
   {
-    return messenger.sendIfNodeAvailable(change);
+    return messenger.send(std::move(change));
+  }
+
+  bool submitChangeIfNodeAvailable(ChangeSettings change)
+  {
+    return messenger.sendIfNodeAvailable(std::move(change));
   }
 
   void preallocateNodes(int numNodesToPreallocate)
@@ -237,7 +244,11 @@ public:
     messenger.preallocateNodes(numNodesToPreallocate);
   }
 
-  ~Async()
+  explicit Async(ObjectSettings objectSettings)
+    : objectSettings{ std::move(objectSettings) }
+  {}
+
+  ~Async() override
   {
     if (asyncThread) {
       asyncThread->removeObject(*this);
@@ -248,15 +259,13 @@ private:
   std::unique_ptr<InstanceAccess> createInstance()
   {
     instances.push_back(std::make_unique<Instance>(objectSettings));
-    return std::make_unique<InstanceAccess>(*this, instances.back().get());
+    return std::unique_ptr<InstanceAccess>{ new InstanceAccess{ *this, instances.back().get() } };
   }
 
   void removeInstance(Instance* instance)
   {
-    auto it =
-      std::find_if(instances.begin(), instances.end(), [instance](auto& instance_) {
-        return instance_.get() == instance;
-      });
+    auto it = std::find_if(
+      instances.begin(), instances.end(), [instance](auto& instance_) { return instance_.get() == instance; });
     assert(it != instances.end());
     if (it == instances.end())
       return;
@@ -265,8 +274,7 @@ private:
 
   bool handleChanges()
   {
-    int numChanges = receiveAndHandleMessageStack(
-      messenger, [&](ChangeSettings& change) { change(objectSettings); });
+    int numChanges = receiveAndHandleMessageStack(messenger, [&](ChangeSettings& change) { change(objectSettings); });
     return numChanges > 0;
   }
 
@@ -279,12 +287,11 @@ private:
     if (anyChange) {
       for (auto& instance : instances) {
         freeMessageStack(instance->toInstance.receiveAllNodes());
-        instance->toInstance.send(Object{ objectSettings });
+        instance->toInstance.send(std::make_unique<Object>(objectSettings));
       }
     }
   }
 
-  AsyncThread* asyncThread{ nullptr };
   std::vector<std::unique_ptr<Instance>> instances;
   Messenger<ChangeSettings> messenger;
   ObjectSettings objectSettings;

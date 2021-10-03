@@ -77,24 +77,36 @@ public:
   /**
    * @return a reference to the message stored in the MessageNode.
    */
-  T& get() { return message; }
+  T& get()
+  {
+    return message;
+  }
 
   /**
    * Sets the message.
    * @param message_ the message to store in the MessageNode object.
    */
-  void set(T message_) { message = std::move(message_); }
+  void set(T message_)
+  {
+    message = std::move(message_);
+  }
 
   /**
    * @return a reference to the next MessageNode in the stack.
    */
-  MessageNode*& next() { return links_[0]; }
+  MessageNode*& next()
+  {
+    return links_[0];
+  }
 
   /**
    * @return a reference to the previous MessageNode in the stack. This is only
    * used by handleMessageStack, and its result is not valid anywhere else.
    */
-  MessageNode*& prev() { return links_[1]; }
+  MessageNode*& prev()
+  {
+    return links_[1];
+  }
 
   /**
    * @return a reference to the last MessageNode in the stack.
@@ -134,8 +146,7 @@ public:
  * @see QwLinkTraits.h
  */
 template<typename T, class Action>
-inline void
-handleMessageStack(MessageNode<T>* head, Action action)
+inline void handleMessageStack(MessageNode<T>* head, Action action)
 {
   if (!head) {
     return;
@@ -161,8 +172,7 @@ handleMessageStack(MessageNode<T>* head, Action action)
  * @see QwLinkTraits.h
  */
 template<typename T>
-inline void
-freeMessageStack(MessageNode<T>* head)
+inline void freeMessageStack(MessageNode<T>* head)
 {
   while (head) {
     auto next = head->next();
@@ -176,8 +186,7 @@ freeMessageStack(MessageNode<T>* head)
  * @tparam T the type of the data held by the nodes
  */
 template<typename T>
-using LifoStack =
-  QwMpmcPopAllLifoStack<MessageNode<T>*, MessageNode<T>::LINK_INDEX_1>;
+using LifoStack = QwMpmcPopAllLifoStack<MessageNode<T>*, MessageNode<T>::LINK_INDEX_1>;
 
 /**
  * Wrapper around QueueWorld's QwMpmcPopAllLifoStack with functionality to
@@ -198,7 +207,10 @@ public:
    * @return true if the message was sent using an already allocated node, false
    * if a node was allocated
    */
-  void send(MessageNode<T>* node) { lifo.push(node); }
+  void send(MessageNode<T>* node)
+  {
+    lifo.push(node);
+  }
 
   /**
    * Sends a Message, wrapping in a MessageNode from the storage if there is
@@ -305,12 +317,18 @@ public:
    * Receives all the messages and returned the stack of nodes that hold them.
    * @return the head node of the stack of message nodes.
    */
-  MessageNode<T>* receiveAllNodes() { return lifo.pop_all(); }
+  MessageNode<T>* receiveAllNodes()
+  {
+    return lifo.pop_all();
+  }
 
   /**
    * @return all the preallocated message nodes that are kept in storage.
    */
-  MessageNode<T>* popStorage() { return storage.pop_all(); }
+  MessageNode<T>* popStorage()
+  {
+    return storage.pop_all();
+  }
 
   /**
    * Recycles a stack of message nodes.
@@ -347,11 +365,20 @@ public:
     recycle(head);
   }
 
-  void discardAllMessages() { recycle(lifo.pop_all()); }
+  void discardAllMessages()
+  {
+    recycle(lifo.pop_all());
+  }
 
-  void freeStorage() { freeMessageStack(storage.pop_all()); }
+  void freeStorage()
+  {
+    freeMessageStack(storage.pop_all());
+  }
 
-  void discardAndFreeAllMessages() { freeMessageStack(lifo.pop_all()); }
+  void discardAndFreeAllMessages()
+  {
+    freeMessageStack(lifo.pop_all());
+  }
 
   ~Messenger()
   {
@@ -370,8 +397,7 @@ public:
  * @return the number of handled messages
  */
 template<typename T, class Action>
-inline int
-receiveAndHandleMessageStack(Messenger<T>& messenger, Action action)
+inline int receiveAndHandleMessageStack(Messenger<T>& messenger, Action action)
 {
   auto messages = messenger.receiveAllNodes();
   auto numMessages = messages->count();
@@ -414,7 +440,10 @@ public:
     replenish();
   }
 
-  ~MessageBuffer() { freeMessageStack(storage.pop_all()); }
+  ~MessageBuffer()
+  {
+    freeMessageStack(storage.pop_all());
+  }
 
   /**
    * Replenishes the buffer to desiredBufferSize nodes.
@@ -447,8 +476,7 @@ public:
    * @return the message node, or nullptr if the buffer is empty and
    * onlyIfAvailable is true
    */
-  MessageNode<T>* getMessageNode(bool onlyIfAvailable = false,
-                                 bool* emptyBufferFlag = nullptr)
+  MessageNode<T>* getMessageNode(bool onlyIfAvailable = false, bool* emptyBufferFlag = nullptr)
   {
     auto* head = storage.pop_all();
     if (!head) {
@@ -472,7 +500,10 @@ public:
   /**
    * @return the number of available message nodes in the buffer.
    */
-  int getNumAvailableNodes() const { return actualSize; }
+  int getNumAvailableNodes() const
+  {
+    return actualSize;
+  }
 
   /**
    * Replenishes the buffer if it is holding less nodes than the minSize
