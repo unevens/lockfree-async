@@ -62,6 +62,13 @@ public:
     preallocateMessageNodes(numNodesToPreallocate);
   }
 
+  explicit PreAllocated(std::unique_ptr<Object> newObject, int numNodesToPreallocate = 128)
+    : currentObjectStorage(std::move(newObject))
+  {
+    currentObjectPtr.store(currentObjectStorage.get(), std::memory_order_release);
+    preallocateMessageNodes(numNodesToPreallocate);
+  }
+
 private:
   lockfree::Messenger<std::unique_ptr<Object>> messengerForNewObjects;
   lockfree::Messenger<std::unique_ptr<Object>> messengerForOldObjects;
