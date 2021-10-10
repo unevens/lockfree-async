@@ -32,9 +32,16 @@ SOFTWARE.
 
 namespace lockfree {
 
+class AsyncThread;
+
+namespace detail {
+
+/**
+ * An interface abstracting over the different template specialization of Async objects.
+ */
 class AsyncInterface
 {
-  friend class AsyncThread;
+  friend class ::lockfree::AsyncThread;
 
 public:
   virtual ~AsyncInterface() = default;
@@ -49,29 +56,52 @@ protected:
   std::mutex& getMutex();
 };
 
+} // namespace detail
+
+/**
+ * The AsyncThread class manages a thread that will perform asynchronously any change submitted to an Async object
+ * attached to it. An Async object needs to be attached to an AsyncThread for it to receive any submitted change.
+ */
 class AsyncThread final
 {
+  using AsyncInterface = detail::AsyncInterface;
   friend AsyncInterface;
 
 public:
+  /**
+   * Constructor
+   * @period the period in milliseconds with which the thread that receives and handles any change submitted to the
+   * objects attached to it.
+   */
   explicit AsyncThread(int timerPeriod = 250)
     : timerPeriod{ timerPeriod }
   {}
 
-  void addObject(AsyncInterface& async)
+  /**
+   * Attaches an Async object from the thread
+   * @asyncObject the object to attach to the thread
+   */
+  void attachObject(AsyncInterface& asyncObject)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    asyncObjects.insert(&async);
-    async.setAsyncThread(this);
+    asyncObjects.insert(&asyncObject);
+    asyncObject.setAsyncThread(this);
   }
 
-  void removeObject(AsyncInterface& async)
+  /**
+   * Detaches an Async object from the thread
+   * @asyncObject the object to detach to the thread
+   */
+  void detachObject(AsyncInterface& asyncObject)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    asyncObjects.erase(&async);
-    async.setAsyncThread(nullptr);
+    asyncObjects.erase(&asyncObject);
+    asyncObject.setAsyncThread(nullptr);
   }
 
+  /**
+   * Starts the thread.
+   */
   void start()
   {
     if (isRunningFlag.load(std::memory_order_acquire)) {
@@ -94,6 +124,9 @@ public:
     });
   }
 
+  /**
+   * Stops the thread.
+   */
   void stop()
   {
     stopTimerFlag.store(true, std::memory_order_release);
@@ -104,26 +137,35 @@ public:
   }
 
   /**
-   * Sets the period of the timer thread that handles the messages.
+   * Sets the period in milliseconds with which the thread that receives and handles any change submitted to the objects
+   * attached to it.
+   * @period the period to set
    */
-  void setTimerPeriod(int period)
+  void setUpdatePeriod(int period)
   {
     timerPeriod.store(period, std::memory_order_release);
   }
 
   /**
-   * @return true if the timer thread is running, false otherwise.
+   * @return the period in milliseconds with which the thread that receives and handles any change submitted to the
+   * objects attached to it.
+   */
+  int getUpdatePeriod() const
+  {
+    return timerPeriod.load(std::memory_order_acquire);
+  }
+
+  /**
+   * @return true if the thread is running, false otherwise.
    */
   bool isRunning() const
   {
     return isRunningFlag.load(std::memory_order_acquire);
   }
 
-  int getTimerPeriod() const
-  {
-    return timerPeriod.load(std::memory_order_acquire);
-  }
-
+  /**
+   * Destructor. It stops the thread if it is active and detach any Async object that was using it
+   */
   ~AsyncThread()
   {
     stop();
@@ -140,13 +182,17 @@ private:
   std::mutex mutex;
 };
 
-inline std::mutex& AsyncInterface::getMutex()
-{
-  return asyncThread->mutex;
-}
-
+/**
+ * Let's say you have some realtime threads, an each of them wants an instance of an object; and sometimes you need to
+ * perform some changes to that object that needs to be done asynchronously and propagated to all the instances. The
+ * Async class handles this scenario. The key idea is that the Object is constructable from some ObjectSettings, and you
+ * can submit a change to those object settings from any thread using a stdext::inplace_function<void(ObjectSettings&)>.
+ * Any thread that wants an instance of the object can request an InstanceAccess which will hold a copy of the Object
+ * constructed from the ObjectSettings, and can receive the result of any changes submitted. The changes and the
+ * construction of the objects happen in an AsyncThread.
+ */
 template<class TObject, class TObjectSettings, size_t ChangeFunctorClosureCapacity = 32>
-class Async final : public AsyncInterface
+class Async final : public detail::AsyncInterface
 {
 public:
   using ObjectSettings = TObjectSettings;
@@ -166,12 +212,19 @@ private:
   };
 
 public:
+  /**
+   * A class that gives access to an instance of the async object.
+   */
   class InstanceAccess final
   {
     template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
     friend class Async;
 
   public:
+    /**
+     * Updates the instance to the last change submitted to the Async object. Lockfree.
+     * @return true if any change has been received and the instance has been updated, otherwise false
+     */
     bool update()
     {
       using std::swap;
@@ -185,16 +238,25 @@ public:
       return false;
     }
 
+    /**
+     * @return a reference to the object instance
+     */
     Object& get()
     {
       return *(instance->object);
     }
 
+    /**
+     * @return a const reference to the object instance
+     */
     Object const& get() const
     {
       return instance->object;
     }
 
+    /**
+     * Destructor.
+     */
     ~InstanceAccess()
     {
       if (async.asyncThread) {
@@ -217,7 +279,9 @@ public:
   };
 
   friend InstanceAccess;
-
+  /**
+   * @return a unique_ptr holding an InstanceAccess object to access and update an instance of the async object
+   */
   std::unique_ptr<InstanceAccess> requestInstance()
   {
     if (asyncThread) {
@@ -229,29 +293,52 @@ public:
     }
   }
 
+  /**
+   * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
+   * instances throught the IstanceAccess::update method.
+   * It is not lock-free, as it may allocate an internal node of the lifo stack if there is no one available.
+   * @return true if the node was available a no allocation has been made, false otherwise
+   */
   bool submitChange(ChangeSettings change)
   {
     return messenger.send(std::move(change));
   }
 
+  /**
+   * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
+   * instances throught the IstanceAccess::update method.
+   * It does not submit the change if the lifo stack is empty. It is lock-free.
+   * @return true if the change was submitted, false if the lifo stack is empty.
+   */
   bool submitChangeIfNodeAvailable(ChangeSettings change)
   {
     return messenger.sendIfNodeAvailable(std::move(change));
   }
 
+  /**
+   * Preallocates nodes for the lifo stack used to send changes.
+   * @numNodesToPreallocate the number of nodes to allcoate
+   */
   void preallocateNodes(int numNodesToPreallocate)
   {
     messenger.preallocateNodes(numNodesToPreallocate);
   }
 
+  /**
+   * Constructor.
+   * @objectSettings the initial settings to build the Async object
+   */
   explicit Async(ObjectSettings objectSettings)
     : objectSettings{ std::move(objectSettings) }
   {}
 
+  /**
+   * Destructor. If the object was attached to an AsyncThread, it detached it
+   */
   ~Async() override
   {
     if (asyncThread) {
-      asyncThread->removeObject(*this);
+      asyncThread->detachObject(*this);
     }
   }
 
@@ -296,5 +383,14 @@ private:
   Messenger<ChangeSettings> messenger;
   ObjectSettings objectSettings;
 };
+
+namespace detail {
+
+inline std::mutex& AsyncInterface::getMutex()
+{
+  return asyncThread->mutex;
+}
+
+} // namespace detail
 
 } // namespace lockfree

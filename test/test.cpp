@@ -23,6 +23,7 @@ SOFTWARE.
 #include "lockfree/Async.hpp"
 #include <chrono>
 #include <iostream>
+#include <sstream>
 
 class Object final
 {
@@ -52,25 +53,29 @@ using AsyncObject = Async<Object, int>;
 int main()
 {
   int const serverUpdatePeriodMs = 50;
-  int const stateChangePeriodMs = 32;
-  int const getterPeriodMs = 20;
+  int const stateChangePeriodMs = 200;
+  int const getterPeriodMs = 100;
 
   auto asyncThread = AsyncThread(serverUpdatePeriodMs);
 
   auto asyncObjecct = AsyncObject(0);
   asyncObjecct.preallocateNodes(1024);
-  asyncThread.addObject(asyncObjecct);
+  asyncThread.attachObject(asyncObjecct);
   asyncThread.start();
 
   std::atomic<bool> runStateChangingThread = true;
   auto makeStateChangingThread = [&] {
     std::thread([&] {
       while (runStateChangingThread) {
-        bool const sent = asyncObjecct.submitChange(AsyncObject::ChangeSettings([](int& state) {
-          std::cout << "incrementing state. prev amount = " << state << "\n";
+        bool const sent = asyncObjecct.submitChangeIfNodeAvailable(AsyncObject::ChangeSettings([](int& state) {
+          std::stringstream s;
+          s << "incrementing state. prev amount = " << state << "\n";
+          std::cout << s.str();
           state += 1;
         }));
-        std::cout << "sending message from state changing thread: " << (sent ? "success" : "failure") << "\n";
+        std::stringstream s;
+        s << "sending message from state changing thread: " << (sent ? "success" : "failure") << "\n";
+        std::cout << s.str();
         std::this_thread::sleep_for(std::chrono::milliseconds(stateChangePeriodMs));
       }
       std::cout << "state changing thread stopped.\n";
@@ -84,7 +89,9 @@ int main()
       while (runGetterThreads) {
         instance->update();
         Object& object = instance->get();
-        std::cout << "from access point thread: " << object.getState() << "\n";
+        std::stringstream s;
+        s << "from access point thread: " << object.getState() << "\n";
+        std::cout << s.str();
         std::this_thread::sleep_for(std::chrono::milliseconds(getterPeriodMs));
       }
       std::cout << "access point thread stopped.\n";

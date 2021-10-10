@@ -194,7 +194,7 @@ using LifoStack = QwMpmcPopAllLifoStack<MessageNode<T>*, MessageNode<T>::LINK_IN
  * @tparam T the type of the data held by the nodes, char is used as default for
  * Messages that are just notification and do not need to have data.
  */
-template<typename T = char>
+template<typename T>
 class Messenger final
 {
   LifoStack<T> lifo;
@@ -342,13 +342,32 @@ public:
   }
 
   /**
+   * Preallocate message nodes using the default constructor of T.
+   * @param numNodesToPreallocate the number of nodes to preallocate.
+   */
+  void preallocateNodes(int numNodesToPreallocate)
+  {
+    MessageNode<T>* head = nullptr;
+    MessageNode<T>* it = nullptr;
+    for (int i = 0; i < numNodesToPreallocate; ++i) {
+      auto node = new MessageNode<T>(T{});
+      if (it) {
+        it->next() = node;
+        it = node;
+      }
+      else if (!head) {
+        head = it = node;
+      }
+    }
+    recycle(head);
+  }
+
+  /**
    * Preallocate message nodes using an initializer functor.
    * @param numNodesToPreallocate the number of nodes to preallocate.
    * @param initializer functor to initialize the nodes.
    */
-  void preallocateNodes(
-    int numNodesToPreallocate,
-    std::function<T(void)> initializer = [] { return T{}; })
+  void preallocateNodes(int numNodesToPreallocate, typename std::function<T()> initializer)
   {
     MessageNode<T>* head = nullptr;
     MessageNode<T>* it = nullptr;
@@ -365,21 +384,33 @@ public:
     recycle(head);
   }
 
+  /**
+   * Discards all messages, recycling their nodes.
+   */
   void discardAllMessages()
   {
     recycle(lifo.pop_all());
   }
 
+  /**
+   * Frees any nodes currently in the storage.
+   */
   void freeStorage()
   {
     freeMessageStack(storage.pop_all());
   }
 
+  /**
+   * Discards all messages and frees the nodes that were holding them.
+   */
   void discardAndFreeAllMessages()
   {
     freeMessageStack(lifo.pop_all());
   }
 
+  /**
+   * Destructor.
+   */
   ~Messenger()
   {
     discardAndFreeAllMessages();
@@ -405,116 +436,5 @@ inline int receiveAndHandleMessageStack(Messenger<T>& messenger, Action action)
   messenger.recycle(messages);
   return numMessages;
 }
-
-/**
- * A class that holds a stack of message nodes initialized with a functor and
- * ready to be sent.
- * @tparam T the type of the data held by the nodes
- */
-template<typename T>
-class MessageBuffer
-{
-  LifoStack<T> storage;
-  int desiredBufferSize;
-  int minSize;
-  std::atomic<int> actualSize;
-  std::function<T(void)> initializer;
-
-public:
-  /**
-   * Constructor.
-   * @param desiredBufferSize the number of nodes to be keep in the buffer.
-   * @param minSize the number of nodes at which to replenish the buffer.
-   * @param initializer a functor to initialize the nodes
-   */
-  MessageBuffer(
-    int desiredBufferSize,
-    int minSize,
-    std::function<T(void)> initializer = [] { return T{}; })
-    : desiredBufferSize{ desiredBufferSize }
-    , actualSize{ 0 }
-    , minSize{ minSize }
-    , initializer{ initializer }
-  {
-    assert(desiredBufferSize >= minSize);
-    replenish();
-  }
-
-  ~MessageBuffer()
-  {
-    freeMessageStack(storage.pop_all());
-  }
-
-  /**
-   * Replenishes the buffer to desiredBufferSize nodes.
-   */
-  void replenish()
-  {
-    auto head = storage.pop_all();
-    int numNodes = head ? head->count() : 0;
-    auto prev = head ? head->last() : nullptr;
-    for (int i = numNodes; i < desiredBufferSize; ++i) {
-      auto node = new MessageNode<T>(initializer());
-      if (prev) {
-        prev->next() = node;
-      }
-      if (!head) {
-        head = node;
-      }
-      prev = node;
-    }
-    storage.push_multiple(head, head->last());
-    actualSize = desiredBufferSize;
-  }
-
-  /**
-   * Gets a message node from the buffer.
-   * @param onlyIfAvailable set it to true to avoid allocation of new nodes if
-   * the buffer is empty.
-   * @param emptyBufferFlag if not null, will be set to true if the buffer is
-   * empty
-   * @return the message node, or nullptr if the buffer is empty and
-   * onlyIfAvailable is true
-   */
-  MessageNode<T>* getMessageNode(bool onlyIfAvailable = false, bool* emptyBufferFlag = nullptr)
-  {
-    auto* head = storage.pop_all();
-    if (!head) {
-      if (emptyBufferFlag) {
-        *emptyBufferFlag = true;
-      }
-      if (onlyIfAvailable) {
-        return nullptr;
-      }
-      return new MessageNode<T>(initializer());
-    }
-    if (emptyBufferFlag) {
-      *emptyBufferFlag = false;
-    }
-    storage.push_multiple(head->next(), head->last());
-    --actualSize;
-    head->next() = nullptr;
-    return head;
-  }
-
-  /**
-   * @return the number of available message nodes in the buffer.
-   */
-  int getNumAvailableNodes() const
-  {
-    return actualSize;
-  }
-
-  /**
-   * Replenishes the buffer if it is holding less nodes than the minSize
-   * specified in the constructor.
-   */
-  void maintenance()
-  {
-    if (actualSize < minSize) {
-      replenish();
-    }
-  }
-};
 
 } // namespace lockfree
