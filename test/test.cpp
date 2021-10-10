@@ -61,19 +61,18 @@ void test(int numStateChangingThreads, int numGetterThreads)
 
   auto asyncThread = AsyncThread(serverUpdatePeriodMs);
 
-  auto asyncObject = AsyncObject(0);
-  asyncThread.attachObject(asyncObject);
+  auto asyncObject = AsyncObject::create(0);
+  asyncThread.attachObject(*asyncObject);
   asyncThread.start();
 
   std::atomic<bool> runStateChangingThread = true;
   std::vector<std::thread> stateChangingThreads;
   auto makeStateChangingThread = [&] {
-    stateChangingThreads.emplace_back([&] {
-      auto producerAccessToken = asyncObject.createProducer();
-      asyncObject.getProducer(producerAccessToken).preallocateNodes(1024);
+    auto producer = asyncObject->createProducer();
+    stateChangingThreads.emplace_back([&runStateChangingThread, producer = std::move(producer), stateChangePeriodMs] {
+      producer->allocateNodes(1024);
       while (runStateChangingThread) {
-        auto& producer = asyncObject.getProducer(producerAccessToken);
-        bool const sent = producer.submitChangeIfNodeAvailable(AsyncObject::ChangeSettings([](int& state) {
+        bool const sent = producer->submitChangeIfNodeAvailable(AsyncObject::ChangeSettings([](int& state) {
           std::stringstream s;
           s << "incrementing state. prev amount = " << state << "\n";
           std::cout << s.str();
@@ -91,12 +90,11 @@ void test(int numStateChangingThreads, int numGetterThreads)
   std::atomic<bool> runGetterThreads = true;
   std::vector<std::thread> getterThreads;
   auto makeGetterThread = [&] {
-    getterThreads.emplace_back([&] {
-      auto instanceAccessToken = asyncObject.createInstance();
+    auto instance = asyncObject->createInstance();
+    getterThreads.emplace_back([&runGetterThreads, instance=std::move(instance), getterPeriodMs] {
       while (runGetterThreads) {
-        auto& instance = asyncObject.getInstance(instanceAccessToken);
-        instance.update();
-        Object& object = instance.get();
+        instance->update();
+        Object& object = instance->get();
         std::stringstream s;
         s << "from access point thread: " << object.getState() << "\n";
         std::cout << s.str();
@@ -123,13 +121,13 @@ void test(int numStateChangingThreads, int numGetterThreads)
   asyncThread.stop();
   std::cout << "asyncThread stopped\n";
   std::cout << "joining getter threads\n";
-  for(auto&thread:getterThreads){
-    if(thread.joinable())
+  for (auto& thread : getterThreads) {
+    if (thread.joinable())
       thread.join();
   }
   std::cout << "joining state changing threads\n";
-  for(auto&thread:stateChangingThreads){
-    if(thread.joinable())
+  for (auto& thread : stateChangingThreads) {
+    if (thread.joinable())
       thread.join();
   }
   std::cout << "===========================================================\n\n\n\n";

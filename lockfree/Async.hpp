@@ -30,10 +30,6 @@ SOFTWARE.
 #include <utility>
 #include <vector>
 
-/**
- * The functionality in this file is still under development.
- * */
-
 namespace lockfree {
 
 class AsyncThread;
@@ -43,20 +39,27 @@ namespace detail {
 /**
  * An interface abstracting over the different template specialization of Async objects.
  */
-class AsyncInterface
+class AsyncInterface : public std::enable_shared_from_this<AsyncInterface>
 {
   friend class ::lockfree::AsyncThread;
 
 public:
   virtual ~AsyncInterface() = default;
 
+  AsyncThread* getAsyncThread() const
+  {
+    return asyncThread;
+  }
+
 protected:
   virtual void timerCallback() = 0;
-  class AsyncThread* asyncThread{ nullptr };
+
   void setAsyncThread(AsyncThread* asyncThread_)
   {
     asyncThread = asyncThread_;
   }
+
+  class AsyncThread* asyncThread{ nullptr };
 };
 
 } // namespace detail
@@ -86,8 +89,15 @@ public:
    */
   void attachObject(AsyncInterface& asyncObject)
   {
+    auto prevAsyncThread = asyncObject.getAsyncThread();
+    if (prevAsyncThread) {
+      if (prevAsyncThread == this) {
+        return;
+      }
+      prevAsyncThread->detachObject(asyncObject);
+    }
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    asyncObjects.insert(&asyncObject);
+    asyncObjects.insert(asyncObject.shared_from_this());
     asyncObject.setAsyncThread(this);
   }
 
@@ -98,8 +108,14 @@ public:
   void detachObject(AsyncInterface& asyncObject)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    asyncObjects.erase(&asyncObject);
-    asyncObject.setAsyncThread(nullptr);
+    auto const it =
+      std::find_if(asyncObjects.begin(), asyncObjects.end(), [&](std::shared_ptr<AsyncInterface> const& element) {
+        return element.get() == &asyncObject;
+      });
+    if (it != asyncObjects.end()) {
+      asyncObjects.erase(it);
+      asyncObject.setAsyncThread(nullptr);
+    }
   }
 
   /**
@@ -115,7 +131,7 @@ public:
     timer = std::thread([this]() {
       while (true) {
         auto const lock = std::lock_guard<std::mutex>(mutex);
-        for (auto asyncObject : asyncObjects)
+        for (auto& asyncObject : asyncObjects)
           asyncObject->timerCallback();
         if (stopTimerFlag.load(std::memory_order_acquire)) {
           return;
@@ -173,12 +189,12 @@ public:
   ~AsyncThread()
   {
     stop();
-    for (auto asyncObject : asyncObjects)
+    for (auto& asyncObject : asyncObjects)
       asyncObject->setAsyncThread(nullptr);
   }
 
 private:
-  std::unordered_set<AsyncInterface*> asyncObjects;
+  std::unordered_set<std::shared_ptr<AsyncInterface>> asyncObjects;
   std::thread timer;
   std::atomic<bool> stopTimerFlag{ false };
   std::atomic<int> timerPeriod;
@@ -202,27 +218,6 @@ public:
   using ObjectSettings = TObjectSettings;
   using Object = TObject;
   using ChangeSettings = stdext::inplace_function<void(ObjectSettings&), ChangeFunctorClosureCapacity>;
-
-  template<class T>
-  class AccessToken
-  {
-    template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
-    friend class Async;
-
-  public:
-    AccessToken(AccessToken const&) = delete;
-    AccessToken& operator=(AccessToken const&) = delete;
-    virtual ~AccessToken() = default;
-
-  protected:
-    explicit AccessToken(Async& async, T* address)
-      : address{ address }
-      , async{ async }
-    {}
-
-    T* address;
-    Async& async;
-  };
 
 public:
   /**
@@ -267,15 +262,24 @@ public:
       return *object;
     }
 
+    ~Instance()
+    {
+      async->removeInstance(this);
+    }
+
   private:
-    explicit Instance(ObjectSettings& objectSettings)
+    explicit Instance(ObjectSettings& objectSettings, std::shared_ptr<Async> async)
       : object{ std::make_unique<Object>(objectSettings) }
+      , async{ std::move(async) }
     {}
 
     std::unique_ptr<Object> object;
     Messenger<std::unique_ptr<Object>> toInstance;
     Messenger<std::unique_ptr<Object>> fromInstance;
+    std::shared_ptr<Async> async;
   };
+
+  friend Instance;
 
   class Producer final
   {
@@ -285,7 +289,7 @@ public:
   public:
     /**
      * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
-     * instances throught the IstanceAccess::update method.
+     * instances through the Instance::update method.
      * It is not lock-free, as it may allocate an internal node of the lifo stack if there is no one available.
      * @return true if the node was available a no allocation has been made, false otherwise
      */
@@ -296,7 +300,7 @@ public:
 
     /**
      * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
-     * instances throught the IstanceAccess::update method.
+     * instances through the Instance::update method.
      * It does not submit the change if the lifo stack is empty. It is lock-free.
      * @return true if the change was submitted, false if the lifo stack is empty.
      */
@@ -306,12 +310,17 @@ public:
     }
 
     /**
-     * Preallocates nodes for the lifo stack used to send changes.
-     * @numNodesToPreallocate the number of nodes to allcoate
+     * Allocates nodes for the lifo stack used to send changes.
+     * @numNodesToAllocate the number of nodes to allocate
      */
-    void preallocateNodes(int numNodesToPreallocate)
+    void allocateNodes(int numNodesToAllocate)
     {
-      messenger.preallocateNodes(numNodesToPreallocate);
+      messenger.allocateNodes(numNodesToAllocate);
+    }
+
+    ~Producer()
+    {
+      async->removeProducer(this);
     }
 
   private:
@@ -321,90 +330,40 @@ public:
       return numChanges > 0;
     }
 
-    Producer() = default;
+    explicit Producer(std::shared_ptr<Async> async)
+      : async{ std::move(async) }
+    {}
 
     Messenger<ChangeSettings> messenger;
+    std::shared_ptr<Async> async;
   };
 
-  class InstanceAccessToken final : public AccessToken<Instance>
-  {
-    using AccessToken<Instance>::AccessToken;
-
-  public:
-    /**
-     * Destructor. Use it by resetting the std::unique_ptr<InstanceAccessToken> to remove the instance form the
-     * AsyncObject.
-     */
-    ~InstanceAccessToken() override
-    {
-      this->async.removeInstance(*this);
-    }
-  };
-
-  class ProducerAccessToken final : public AccessToken<Producer>
-  {
-    using AccessToken<Producer>::AccessToken;
-
-  public:
-    /**
-     * Destructor. Use it by resetting the std::unique_ptr<ProducerAccessToken> to remove the producer form the
-     * AsyncObject.
-     */
-    ~ProducerAccessToken() override
-    {
-      this->async.removeProducer(*this);
-    }
-  };
+  friend Producer;
 
   /**
-   * Creates a new instance of the object and return an access token for it
-   * @return an AccessToken to the Instance
+   * Creates a new Instance of the object
+   * @return the Instance
    */
-  std::unique_ptr<InstanceAccessToken> createInstance()
+  std::unique_ptr<Instance> createInstance()
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    instances.push_back(std::unique_ptr<Instance>(new Instance(objectSettings)));
-    return std::unique_ptr<InstanceAccessToken>(new InstanceAccessToken{ *this, instances.back().get() });
+    auto instance = std::unique_ptr<Instance>(
+      new Instance(objectSettings, std::static_pointer_cast<Async>(this->shared_from_this())));
+    instances.push_back(instance.get());
+    return instance;
   }
 
   /**
-   * Gets an instance of the object from an access token
-   * @accessToken access token to the instance
-   * @return a reference to the instance
+   * Creates a new producer of object changes
+   * @return the producer
    */
-  Instance& getInstance(std::unique_ptr<InstanceAccessToken>& accessToken)
-  {
-    return *(accessToken->address);
-  }
-
-  /**
-   * Creates a new producer of object changes and return an access token for it
-   * @return an AccessToken to the Producer
-   */
-  std::unique_ptr<ProducerAccessToken> createProducer()
+  std::unique_ptr<Producer> createProducer()
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    producers.push_back(std::unique_ptr<Producer>(new Producer));
-    return std::unique_ptr<ProducerAccessToken>(new ProducerAccessToken{ *this, producers.back().get() });
+    auto producer = std::unique_ptr<Producer>(new Producer(std::static_pointer_cast<Async>(this->shared_from_this())));
+    producers.push_back(producer.get());
+    return producer;
   }
-
-  /**
-   * Gets a producer of object changes from an access token
-   * @accessToken access token to the producer
-   * @return a reference to the producer
-   */
-  Producer& getProducer(std::unique_ptr<ProducerAccessToken>& accessToken)
-  {
-    return *(accessToken->address);
-  }
-
-  /**
-   * Constructor.
-   * @objectSettings the initial settings to build the Async object
-   */
-  explicit Async(ObjectSettings objectSettings)
-    : objectSettings{ std::move(objectSettings) }
-  {}
 
   /**
    * Destructor. If the object was attached to an AsyncThread, it detached it
@@ -417,32 +376,45 @@ public:
     }
   }
 
-private:
-  template<class T>
-  void removeFromToken(AccessToken<T>& token, std::vector<std::unique_ptr<T>>& storage)
+  /**
+   * Creates an Async object.
+   * @objectSettings the initial settings to build the Async object
+   */
+  static std::shared_ptr<Async> create(ObjectSettings objectSettings)
   {
-    auto it =
-      std::find_if(storage.begin(), storage.end(), [&](auto& element) { return element.get() == token.address; });
+    return std::shared_ptr<Async>(new Async(std::move(objectSettings)));
+  }
+
+private:
+  explicit Async(ObjectSettings objectSettings)
+    : objectSettings{ std::move(objectSettings) }
+  {}
+
+  template<class T>
+  void removeAddressFromStorage(T* address, std::vector<T*>& storage)
+  {
+    auto it = std::find(storage.begin(), storage.end(), address);
     assert(it != storage.end());
     if (it == storage.end())
       return;
     storage.erase(it);
   }
 
-  void removeInstance(InstanceAccessToken& token)
+  void removeInstance(Instance* instance)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    removeFromToken(token, instances);
+    removeAddressFromStorage(instance, instances);
   }
 
-  void removeProducer(ProducerAccessToken& token)
+  void removeProducer(Producer* producer)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    removeFromToken(token, producers);
+    removeAddressFromStorage(producer, producers);
   }
 
   void timerCallback() override
   {
+    auto const lock = std::lock_guard<std::mutex>(mutex);
     for (auto& instance : instances) {
       instance->fromInstance.discardAndFreeAllMessages();
     }
@@ -461,8 +433,8 @@ private:
     }
   }
 
-  std::vector<std::unique_ptr<Producer>> producers;
-  std::vector<std::unique_ptr<Instance>> instances;
+  std::vector<Producer*> producers;
+  std::vector<Instance*> instances;
   ObjectSettings objectSettings;
   std::mutex mutex;
 };

@@ -342,14 +342,15 @@ public:
   }
 
   /**
-   * Preallocate message nodes using the default constructor of T.
+   * Allocates message nodes using the default constructor of T and puts them into the storage, ready to be used for
+   * sending messages.
    * @param numNodesToPreallocate the number of nodes to preallocate.
    */
-  void preallocateNodes(int numNodesToPreallocate)
+  void allocateNodes(int numNodesToAllocate)
   {
     MessageNode<T>* head = nullptr;
     MessageNode<T>* it = nullptr;
-    for (int i = 0; i < numNodesToPreallocate; ++i) {
+    for (int i = 0; i < numNodesToAllocate; ++i) {
       auto node = new MessageNode<T>(T{});
       if (it) {
         it->next() = node;
@@ -363,15 +364,16 @@ public:
   }
 
   /**
-   * Preallocate message nodes using an initializer functor.
+   * Allocates message nodes using initializer functor and puts them into the storage, ready to be used for
+   * sending messages.
    * @param numNodesToPreallocate the number of nodes to preallocate.
    * @param initializer functor to initialize the nodes.
    */
-  void preallocateNodes(int numNodesToPreallocate, typename std::function<T()> initializer)
+  void allocateNodes(int numNodesToAllocate, typename std::function<T()> initializer)
   {
     MessageNode<T>* head = nullptr;
     MessageNode<T>* it = nullptr;
-    for (int i = 0; i < numNodesToPreallocate; ++i) {
+    for (int i = 0; i < numNodesToAllocate; ++i) {
       auto node = new MessageNode<T>(initializer());
       if (it) {
         it->next() = node;
