@@ -26,7 +26,7 @@ SOFTWARE.
 namespace lockfree {
 
 template<class Object>
-class PreAllocated final
+class RealtimeObject final
 {
 public:
   /**
@@ -80,7 +80,7 @@ public:
    * @param object the object to hold
    * @param numNodesToPreallocate the number of nodes to allocate.
    */
-  explicit PreAllocated(std::unique_ptr<Object> object, int numNodesToPreallocate = 128)
+  explicit RealtimeObject(std::unique_ptr<Object> object, int numNodesToPreallocate = 128)
     : currentObjectStorage(std::move(object))
   {
     currentObjectPtr.store(currentObjectStorage.get(), std::memory_order_release);
@@ -91,7 +91,7 @@ public:
    * Constructor.
    * @param numNodesToPreallocate the number of nodes to allocate.
    */
-  explicit PreAllocated(int numNodesToPreallocate = 128)
+  explicit RealtimeObject(int numNodesToPreallocate = 128)
   {
     allocateMessageNodes(numNodesToPreallocate);
   }

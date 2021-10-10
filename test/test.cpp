@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include "lockfree/Async.hpp"
+#include "lockfree/AsyncObject.hpp"
 #include <chrono>
 #include <iostream>
 #include <sstream>
@@ -47,8 +47,7 @@ static_assert(std::is_copy_constructible<Object>::value, "Object should be move 
 
 static_assert(std::is_copy_assignable<Object>::value, "Object should be move assignable");
 
-using namespace lockfree;
-using AsyncObject = Async<Object, int>;
+using AsyncObject = lockfree::AsyncObject<Object, int>;
 
 void test(int numStateChangingThreads, int numGetterThreads)
 {
@@ -59,7 +58,7 @@ void test(int numStateChangingThreads, int numGetterThreads)
   int const stateChangePeriodMs = 200;
   int const getterPeriodMs = 100;
 
-  auto asyncThread = AsyncThread(serverUpdatePeriodMs);
+  auto asyncThread = lockfree::AsyncThread(serverUpdatePeriodMs);
 
   auto asyncObject = AsyncObject::create(0);
   asyncThread.attachObject(*asyncObject);
@@ -91,7 +90,7 @@ void test(int numStateChangingThreads, int numGetterThreads)
   std::vector<std::thread> getterThreads;
   auto makeGetterThread = [&] {
     auto instance = asyncObject->createInstance();
-    getterThreads.emplace_back([&runGetterThreads, instance=std::move(instance), getterPeriodMs] {
+    getterThreads.emplace_back([&runGetterThreads, instance = std::move(instance), getterPeriodMs] {
       while (runGetterThreads) {
         instance->update();
         Object& object = instance->get();

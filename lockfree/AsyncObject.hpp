@@ -39,12 +39,12 @@ namespace detail {
 /**
  * An interface abstracting over the different template specialization of Async objects.
  */
-class AsyncInterface : public std::enable_shared_from_this<AsyncInterface>
+class AsyncObjectInterface : public std::enable_shared_from_this<AsyncObjectInterface>
 {
   friend class ::lockfree::AsyncThread;
 
 public:
-  virtual ~AsyncInterface() = default;
+  virtual ~AsyncObjectInterface() = default;
 
   AsyncThread* getAsyncThread() const
   {
@@ -70,7 +70,7 @@ protected:
  */
 class AsyncThread final
 {
-  using AsyncInterface = detail::AsyncInterface;
+  using AsyncInterface = detail::AsyncObjectInterface;
   friend AsyncInterface;
 
 public:
@@ -212,7 +212,7 @@ private:
  * The changes and the construction of the objects happen in an AsyncThread.
  */
 template<class TObject, class TObjectSettings, size_t ChangeFunctorClosureCapacity = 32>
-class Async final : public detail::AsyncInterface
+class AsyncObject final : public detail::AsyncObjectInterface
 {
 public:
   using ObjectSettings = TObjectSettings;
@@ -226,7 +226,7 @@ public:
   class Instance final
   {
     template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
-    friend class Async;
+    friend class AsyncObject;
 
   public:
     /**
@@ -268,7 +268,7 @@ public:
     }
 
   private:
-    explicit Instance(ObjectSettings& objectSettings, std::shared_ptr<Async> async)
+    explicit Instance(ObjectSettings& objectSettings, std::shared_ptr<AsyncObject> async)
       : object{ std::make_unique<Object>(objectSettings) }
       , async{ std::move(async) }
     {}
@@ -276,7 +276,7 @@ public:
     std::unique_ptr<Object> object;
     Messenger<std::unique_ptr<Object>> toInstance;
     Messenger<std::unique_ptr<Object>> fromInstance;
-    std::shared_ptr<Async> async;
+    std::shared_ptr<AsyncObject> async;
   };
 
   friend Instance;
@@ -284,7 +284,7 @@ public:
   class Producer final
   {
     template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
-    friend class Async;
+    friend class AsyncObject;
 
   public:
     /**
@@ -330,12 +330,12 @@ public:
       return numChanges > 0;
     }
 
-    explicit Producer(std::shared_ptr<Async> async)
+    explicit Producer(std::shared_ptr<AsyncObject> async)
       : async{ std::move(async) }
     {}
 
     Messenger<ChangeSettings> messenger;
-    std::shared_ptr<Async> async;
+    std::shared_ptr<AsyncObject> async;
   };
 
   friend Producer;
@@ -348,7 +348,7 @@ public:
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
     auto instance = std::unique_ptr<Instance>(
-      new Instance(objectSettings, std::static_pointer_cast<Async>(this->shared_from_this())));
+      new Instance(objectSettings, std::static_pointer_cast<AsyncObject>(this->shared_from_this())));
     instances.push_back(instance.get());
     return instance;
   }
@@ -360,7 +360,8 @@ public:
   std::unique_ptr<Producer> createProducer()
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    auto producer = std::unique_ptr<Producer>(new Producer(std::static_pointer_cast<Async>(this->shared_from_this())));
+    auto producer =
+      std::unique_ptr<Producer>(new Producer(std::static_pointer_cast<AsyncObject>(this->shared_from_this())));
     producers.push_back(producer.get());
     return producer;
   }
@@ -368,7 +369,7 @@ public:
   /**
    * Destructor. If the object was attached to an AsyncThread, it detached it
    */
-  ~Async() override
+  ~AsyncObject() override
   {
     assert(instances.empty() && producers.empty());
     if (asyncThread) {
@@ -380,13 +381,13 @@ public:
    * Creates an Async object.
    * @objectSettings the initial settings to build the Async object
    */
-  static std::shared_ptr<Async> create(ObjectSettings objectSettings)
+  static std::shared_ptr<AsyncObject> create(ObjectSettings objectSettings)
   {
-    return std::shared_ptr<Async>(new Async(std::move(objectSettings)));
+    return std::shared_ptr<AsyncObject>(new AsyncObject(std::move(objectSettings)));
   }
 
 private:
-  explicit Async(ObjectSettings objectSettings)
+  explicit AsyncObject(ObjectSettings objectSettings)
     : objectSettings{ std::move(objectSettings) }
   {}
 

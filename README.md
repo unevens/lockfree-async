@@ -12,13 +12,13 @@ The template class `Messenger<T>` is a wrapper around the Queue World's multiple
 It implements functionality to send and receive data of type `T` between threads in a lock-free way, and to preallocate
 the resources to do so.
 
-## PreAllocated.hpp
+## RealtimeObject.hpp
 
-The template class `PreAllocated<T>` owns an object of class `T` which can be shared between a non realtime thread and a
+The template class `RealtimeObject<T>` owns an object of class `T` which can be shared between a non realtime thread and a
 realtime thread, so that the non realtime thread can perform any blocking operation, such as creating the object, and
 the realtime thread can use the object.
 
-## Async.hpp
+## AsyncObject.hpp
 
-The template class `Async` manages asynchronous creation and destruction of several instances of an object, that can be
-requested and used from realtime threads, while being created, modified and destroyed by a timer thread.
+The template class `AsyncObject` manages asynchronous creation, modification, and destruction of several instances of an object, that can be
+used from realtime threads, while being created, modified and destroyed by a timer thread.
