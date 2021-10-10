@@ -267,20 +267,8 @@ public:
    * last to its argument, and return true; otherwise it will return false.
    * REMARK: When "receiveLastMessage" is called, ONLY the message sent for last
    * is received, all the others are discarded.
-   * @param message an already allocated message to which the received message
-   * will be moved.
+   * @return a std::optional holding the maybe received message
    */
-  bool receiveLastMessage(T& message)
-  {
-    MessageNode<T>* head = lifo.pop_all();
-    if (!head) {
-      return false;
-    }
-    message = std::move(head->get());
-    storage.push_multiple(head, head->last());
-    return true;
-  }
-
   std::optional<T> receiveLastMessage()
   {
     MessageNode<T>* head = lifo.pop_all();
