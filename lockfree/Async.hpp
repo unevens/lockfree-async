@@ -30,6 +30,10 @@ SOFTWARE.
 #include <utility>
 #include <vector>
 
+/**
+ * The functionality in this file is still under development.
+ * */
+
 namespace lockfree {
 
 class AsyncThread;
@@ -53,7 +57,6 @@ protected:
   {
     asyncThread = asyncThread_;
   }
-  std::mutex& getMutex();
 };
 
 } // namespace detail
@@ -111,6 +114,7 @@ public:
     isRunningFlag.store(true, std::memory_order_release);
     timer = std::thread([this]() {
       while (true) {
+        auto const lock = std::lock_guard<std::mutex>(mutex);
         for (auto asyncObject : asyncObjects)
           asyncObject->timerCallback();
         if (stopTimerFlag.load(std::memory_order_acquire)) {
@@ -186,10 +190,10 @@ private:
  * Let's say you have some realtime threads, an each of them wants an instance of an object; and sometimes you need to
  * perform some changes to that object that needs to be done asynchronously and propagated to all the instances. The
  * Async class handles this scenario. The key idea is that the Object is constructable from some ObjectSettings, and you
- * can submit a change to those object settings from any thread using a stdext::inplace_function<void(ObjectSettings&)>.
- * Any thread that wants an instance of the object can request an InstanceAccess which will hold a copy of the Object
- * constructed from the ObjectSettings, and can receive the result of any changes submitted. The changes and the
- * construction of the objects happen in an AsyncThread.
+ * can submit a change to those object settings from any thread using a stdext::inplace_function<void(ObjectSettings&)>
+ * through an Async::Producer. Any thread that wants an instance of the object can request an Async::Instance which will
+ * hold a copy of the Object constructed from the ObjectSettings, and can receive the result of any changes submitted.
+ * The changes and the construction of the objects happen in an AsyncThread.
  */
 template<class TObject, class TObjectSettings, size_t ChangeFunctorClosureCapacity = 32>
 class Async final : public detail::AsyncInterface
@@ -199,23 +203,32 @@ public:
   using Object = TObject;
   using ChangeSettings = stdext::inplace_function<void(ObjectSettings&), ChangeFunctorClosureCapacity>;
 
-private:
-  struct Instance final
+  template<class T>
+  class AccessToken
   {
-    std::unique_ptr<Object> object;
-    Messenger<std::unique_ptr<Object>> toInstance;
-    Messenger<std::unique_ptr<Object>> fromInstance;
+    template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
+    friend class Async;
 
-    explicit Instance(ObjectSettings& objectSettings)
-      : object{ std::make_unique<Object>(objectSettings) }
+  public:
+    AccessToken(AccessToken const&) = delete;
+    AccessToken& operator=(AccessToken const&) = delete;
+    virtual ~AccessToken() = default;
+
+  protected:
+    explicit AccessToken(Async& async, T* address)
+      : address{ address }
+      , async{ async }
     {}
+
+    T* address;
+    Async& async;
   };
 
 public:
   /**
    * A class that gives access to an instance of the async object.
    */
-  class InstanceAccess final
+  class Instance final
   {
     template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
     friend class Async;
@@ -228,100 +241,161 @@ public:
     bool update()
     {
       using std::swap;
-      auto messageNode = instance->toInstance.receiveLastNode();
+      auto messageNode = toInstance.receiveLastNode();
       if (messageNode) {
-        auto& object = messageNode->get();
-        swap(instance->object, object);
-        instance->fromInstance.send(messageNode);
+        auto& newObject = messageNode->get();
+        swap(object, newObject);
+        fromInstance.send(messageNode);
         return true;
       }
       return false;
     }
 
     /**
-     * @return a reference to the object instance
+     * @return a reference to the actual object instance
      */
     Object& get()
     {
-      return *(instance->object);
+      return *object;
     }
 
     /**
-     * @return a const reference to the object instance
+     * @return a const reference to the actual object instance
      */
     Object const& get() const
     {
-      return instance->object;
-    }
-
-    /**
-     * Destructor.
-     */
-    ~InstanceAccess()
-    {
-      if (async.asyncThread) {
-        auto const lock = std::lock_guard<std::mutex>(async.getMutex());
-        async.removeInstance(instance);
-      }
-      else {
-        async.removeInstance(instance);
-      }
+      return *object;
     }
 
   private:
-    explicit InstanceAccess(Async& async, Instance* instance)
-      : async{ async }
-      , instance{ instance }
+    explicit Instance(ObjectSettings& objectSettings)
+      : object{ std::make_unique<Object>(objectSettings) }
     {}
 
-    Async& async;
-    Instance* instance;
+    std::unique_ptr<Object> object;
+    Messenger<std::unique_ptr<Object>> toInstance;
+    Messenger<std::unique_ptr<Object>> fromInstance;
   };
 
-  friend InstanceAccess;
-  /**
-   * @return a unique_ptr holding an InstanceAccess object to access and update an instance of the async object
-   */
-  std::unique_ptr<InstanceAccess> requestInstance()
+  class Producer final
   {
-    if (asyncThread) {
-      auto const lock = std::lock_guard<std::mutex>(getMutex());
-      return createInstance();
+    template<class TObject_, class TObjectSettings_, size_t ChangeFunctorClosureCapacity_>
+    friend class Async;
+
+  public:
+    /**
+     * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
+     * instances throught the IstanceAccess::update method.
+     * It is not lock-free, as it may allocate an internal node of the lifo stack if there is no one available.
+     * @return true if the node was available a no allocation has been made, false otherwise
+     */
+    bool submitChange(ChangeSettings change)
+    {
+      return messenger.send(std::move(change));
     }
-    else {
-      return createInstance();
+
+    /**
+     * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
+     * instances throught the IstanceAccess::update method.
+     * It does not submit the change if the lifo stack is empty. It is lock-free.
+     * @return true if the change was submitted, false if the lifo stack is empty.
+     */
+    bool submitChangeIfNodeAvailable(ChangeSettings change)
+    {
+      return messenger.sendIfNodeAvailable(std::move(change));
     }
+
+    /**
+     * Preallocates nodes for the lifo stack used to send changes.
+     * @numNodesToPreallocate the number of nodes to allcoate
+     */
+    void preallocateNodes(int numNodesToPreallocate)
+    {
+      messenger.preallocateNodes(numNodesToPreallocate);
+    }
+
+  private:
+    bool handleChanges(ObjectSettings& objectSettings)
+    {
+      int numChanges = receiveAndHandleMessageStack(messenger, [&](ChangeSettings& change) { change(objectSettings); });
+      return numChanges > 0;
+    }
+
+    Producer() = default;
+
+    Messenger<ChangeSettings> messenger;
+  };
+
+  class InstanceAccessToken final : public AccessToken<Instance>
+  {
+    using AccessToken<Instance>::AccessToken;
+
+  public:
+    /**
+     * Destructor. Use it by resetting the std::unique_ptr<InstanceAccessToken> to remove the instance form the
+     * AsyncObject.
+     */
+    ~InstanceAccessToken() override
+    {
+      this->async.removeInstance(*this);
+    }
+  };
+
+  class ProducerAccessToken final : public AccessToken<Producer>
+  {
+    using AccessToken<Producer>::AccessToken;
+
+  public:
+    /**
+     * Destructor. Use it by resetting the std::unique_ptr<ProducerAccessToken> to remove the producer form the
+     * AsyncObject.
+     */
+    ~ProducerAccessToken() override
+    {
+      this->async.removeProducer(*this);
+    }
+  };
+
+  /**
+   * Creates a new instance of the object and return an access token for it
+   * @return an AccessToken to the Instance
+   */
+  std::unique_ptr<InstanceAccessToken> createInstance()
+  {
+    auto const lock = std::lock_guard<std::mutex>(mutex);
+    instances.push_back(std::unique_ptr<Instance>(new Instance(objectSettings)));
+    return std::unique_ptr<InstanceAccessToken>(new InstanceAccessToken{ *this, instances.back().get() });
   }
 
   /**
-   * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
-   * instances throught the IstanceAccess::update method.
-   * It is not lock-free, as it may allocate an internal node of the lifo stack if there is no one available.
-   * @return true if the node was available a no allocation has been made, false otherwise
+   * Gets an instance of the object from an access token
+   * @accessToken access token to the instance
+   * @return a reference to the instance
    */
-  bool submitChange(ChangeSettings change)
+  Instance& getInstance(std::unique_ptr<InstanceAccessToken>& accessToken)
   {
-    return messenger.send(std::move(change));
+    return *(accessToken->address);
   }
 
   /**
-   * Submit a change to Async object, which will be handled asynchronously by the AsyncThread and received by the
-   * instances throught the IstanceAccess::update method.
-   * It does not submit the change if the lifo stack is empty. It is lock-free.
-   * @return true if the change was submitted, false if the lifo stack is empty.
+   * Creates a new producer of object changes and return an access token for it
+   * @return an AccessToken to the Producer
    */
-  bool submitChangeIfNodeAvailable(ChangeSettings change)
+  std::unique_ptr<ProducerAccessToken> createProducer()
   {
-    return messenger.sendIfNodeAvailable(std::move(change));
+    auto const lock = std::lock_guard<std::mutex>(mutex);
+    producers.push_back(std::unique_ptr<Producer>(new Producer));
+    return std::unique_ptr<ProducerAccessToken>(new ProducerAccessToken{ *this, producers.back().get() });
   }
 
   /**
-   * Preallocates nodes for the lifo stack used to send changes.
-   * @numNodesToPreallocate the number of nodes to allcoate
+   * Gets a producer of object changes from an access token
+   * @accessToken access token to the producer
+   * @return a reference to the producer
    */
-  void preallocateNodes(int numNodesToPreallocate)
+  Producer& getProducer(std::unique_ptr<ProducerAccessToken>& accessToken)
   {
-    messenger.preallocateNodes(numNodesToPreallocate);
+    return *(accessToken->address);
   }
 
   /**
@@ -337,60 +411,60 @@ public:
    */
   ~Async() override
   {
+    assert(instances.empty() && producers.empty());
     if (asyncThread) {
       asyncThread->detachObject(*this);
     }
   }
 
 private:
-  std::unique_ptr<InstanceAccess> createInstance()
+  template<class T>
+  void removeFromToken(AccessToken<T>& token, std::vector<std::unique_ptr<T>>& storage)
   {
-    instances.push_back(std::make_unique<Instance>(objectSettings));
-    return std::unique_ptr<InstanceAccess>{ new InstanceAccess{ *this, instances.back().get() } };
-  }
-
-  void removeInstance(Instance* instance)
-  {
-    auto it = std::find_if(
-      instances.begin(), instances.end(), [instance](auto& instance_) { return instance_.get() == instance; });
-    assert(it != instances.end());
-    if (it == instances.end())
+    auto it =
+      std::find_if(storage.begin(), storage.end(), [&](auto& element) { return element.get() == token.address; });
+    assert(it != storage.end());
+    if (it == storage.end())
       return;
-    instances.erase(it);
+    storage.erase(it);
   }
 
-  bool handleChanges()
+  void removeInstance(InstanceAccessToken& token)
   {
-    int numChanges = receiveAndHandleMessageStack(messenger, [&](ChangeSettings& change) { change(objectSettings); });
-    return numChanges > 0;
+    auto const lock = std::lock_guard<std::mutex>(mutex);
+    removeFromToken(token, instances);
+  }
+
+  void removeProducer(ProducerAccessToken& token)
+  {
+    auto const lock = std::lock_guard<std::mutex>(mutex);
+    removeFromToken(token, producers);
   }
 
   void timerCallback() override
   {
     for (auto& instance : instances) {
-      freeMessageStack(instance->fromInstance.receiveAllNodes());
+      instance->fromInstance.discardAndFreeAllMessages();
     }
-    bool const anyChange = handleChanges();
+    bool anyChange = false;
+    for (auto& producer : producers) {
+      bool const anyChangeFromProducer = producer->handleChanges(objectSettings);
+      if (anyChangeFromProducer) {
+        anyChange = true;
+      }
+    }
     if (anyChange) {
       for (auto& instance : instances) {
-        freeMessageStack(instance->toInstance.receiveAllNodes());
+        instance->toInstance.discardAndFreeAllMessages();
         instance->toInstance.send(std::make_unique<Object>(objectSettings));
       }
     }
   }
 
+  std::vector<std::unique_ptr<Producer>> producers;
   std::vector<std::unique_ptr<Instance>> instances;
-  Messenger<ChangeSettings> messenger;
   ObjectSettings objectSettings;
+  std::mutex mutex;
 };
-
-namespace detail {
-
-inline std::mutex& AsyncInterface::getMutex()
-{
-  return asyncThread->mutex;
-}
-
-} // namespace detail
 
 } // namespace lockfree
