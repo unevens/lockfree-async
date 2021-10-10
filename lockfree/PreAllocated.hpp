@@ -29,6 +29,11 @@ template<class Object>
 class PreAllocated final
 {
 public:
+  /**
+   * Gets the object on the realtime thread. It updates it if a new version has been submitted, and send the old version
+   * back to the non real-time thread to be freed. Lock-free.
+   * @return a pointer to the object
+   */
   Object* getFromRealtimeThread()
   {
     auto newObject = messengerForNewObjects.receiveLastMessage();
@@ -40,33 +45,55 @@ public:
     return currentObjectStorage.get();
   }
 
+  /**
+   * Gets the object in use on the real-time thread form a non realtime thread.
+   * @return a pointer to the object
+   */
   Object* getFromNonRealtimeThread()
   {
     return currentObjectPtr.load(std::memory_order_acquire);
   }
 
+  /**
+   * Sets the object and it sends it to the real-time thread. Also frees any object that has been previously discarded
+   * from the real-time thread.
+   * @newObject the new version of the object
+   */
   void set(std::unique_ptr<Object> newObject)
   {
     lockfree::receiveAndHandleMessageStack(messengerForOldObjects, [](auto& object) { object.reset(); });
     messengerForNewObjects.send(std::move(newObject));
   }
 
-  void preallocateMessageNodes(int numNodesToPreallocate)
+  /**
+   * Allocates message nodes.
+   * @param numNodesToPreallocate the number of nodes to allocate.
+   */
+  void allocateMessageNodes(int numNodesToPreallocate)
   {
-    messengerForNewObjects.preallocateNodes(numNodesToPreallocate);
-    messengerForOldObjects.preallocateNodes(numNodesToPreallocate);
+    messengerForNewObjects.allocateNodes(numNodesToPreallocate);
+    messengerForOldObjects.allocateNodes(numNodesToPreallocate);
   }
 
-  explicit PreAllocated(int numNodesToPreallocate = 128)
-  {
-    preallocateMessageNodes(numNodesToPreallocate);
-  }
-
-  explicit PreAllocated(std::unique_ptr<Object> newObject, int numNodesToPreallocate = 128)
-    : currentObjectStorage(std::move(newObject))
+  /**
+   * Constructor.
+   * @param object the object to hold
+   * @param numNodesToPreallocate the number of nodes to allocate.
+   */
+  explicit PreAllocated(std::unique_ptr<Object> object, int numNodesToPreallocate = 128)
+    : currentObjectStorage(std::move(object))
   {
     currentObjectPtr.store(currentObjectStorage.get(), std::memory_order_release);
-    preallocateMessageNodes(numNodesToPreallocate);
+    allocateMessageNodes(numNodesToPreallocate);
+  }
+
+  /**
+   * Constructor.
+   * @param numNodesToPreallocate the number of nodes to allocate.
+   */
+  explicit PreAllocated(int numNodesToPreallocate = 128)
+  {
+    allocateMessageNodes(numNodesToPreallocate);
   }
 
 private:

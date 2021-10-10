@@ -332,7 +332,7 @@ public:
   /**
    * Allocates message nodes using the default constructor of T and puts them into the storage, ready to be used for
    * sending messages.
-   * @param numNodesToPreallocate the number of nodes to preallocate.
+   * @param numNodesToAllocate the number of nodes to allocate.
    */
   void allocateNodes(int numNodesToAllocate)
   {
@@ -354,7 +354,7 @@ public:
   /**
    * Allocates message nodes using initializer functor and puts them into the storage, ready to be used for
    * sending messages.
-   * @param numNodesToPreallocate the number of nodes to preallocate.
+   * @param numNodesToAllocate the number of nodes to allocate.
    * @param initializer functor to initialize the nodes.
    */
   void allocateNodes(int numNodesToAllocate, typename std::function<T()> initializer)
