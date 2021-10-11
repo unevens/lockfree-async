@@ -46,6 +46,43 @@ public:
   }
 
   /**
+   * Changes the object from a the non-realtime thread, making a copy, applying the change to the copy and sending it to
+   * the realtime thread. The change is a std::function<void(Object&)>.
+   * @oaram change an std::function that will apply the change
+   */
+  void changeFromNonRealtimeThread(std::function<void(Object&)> const& change)
+  {
+    auto objectPtr = getFromNonRealtimeThread();
+    if (!objectPtr)
+      return;
+    auto objectCopy = std::make_unique<Object>(*objectPtr);
+    change(*objectCopy);
+    set(std::move(objectCopy));
+  }
+
+  /**
+   * Conditionally changes the object from a the non-realtime thread, making a copy, applying the change to the copy and
+   * sending it to the realtime thread, if a predicate returns true.
+   * @oaram change an std::function that will apply the change
+   * @oaram predicate the predicate used to decide if the change is to be applied
+   * @return true if the predicate returned true and the change was applied, false otherwise
+   */
+  bool changeFromNonRealtimeThreadIf(std::function<void(Object&)> const& change,
+                                     std::function<bool(Object const&)> const& predicate)
+  {
+    auto objectPtr = getFromNonRealtimeThread();
+    if (!objectPtr)
+      return false;
+    if (predicate(*objectPtr)) {
+      auto objectCopy = std::make_unique<Object>(*objectPtr);
+      change(*objectCopy);
+      set(std::move(objectCopy));
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Gets the object in use on the real-time thread form a non realtime thread.
    * @return a pointer to the object
    */
