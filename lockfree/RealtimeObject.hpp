@@ -25,6 +25,10 @@ SOFTWARE.
 
 namespace lockfree {
 
+/**
+ * A wrapper to manage an object that has to be used by 1 real-time thread, and that it is created and modified by 1 non
+ * real-time thread.
+ * */
 template<class Object>
 class RealtimeObject final
 {
