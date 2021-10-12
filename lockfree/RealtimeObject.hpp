@@ -124,15 +124,6 @@ public:
     allocateMessageNodes(numNodesToPreallocate);
   }
 
-  /**
-   * Constructor.
-   * @param numNodesToPreallocate the number of nodes to allocate.
-   */
-  explicit RealtimeObject(int numNodesToPreallocate = 128)
-  {
-    allocateMessageNodes(numNodesToPreallocate);
-  }
-
 private:
   lockfree::Messenger<std::unique_ptr<Object>> messengerForNewObjects;
   lockfree::Messenger<std::unique_ptr<Object>> messengerForOldObjects;
