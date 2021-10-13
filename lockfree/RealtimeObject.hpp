@@ -22,12 +22,13 @@ SOFTWARE.
 #pragma once
 #include "Messenger.hpp"
 #include <cassert>
+#include <mutex>
 
 namespace lockfree {
 
 /**
- * A wrapper to manage an object that has to be used by 1 real-time thread, and that it is created and modified by 1 non
- * real-time thread.
+ * A wrapper to manage an object that needs to be used by one real-time thread, and that it is created and modified by
+ * one or more non real-time threads.
  * */
 template<class Object>
 class RealtimeObject final
@@ -40,26 +41,27 @@ public:
    */
   Object* getFromRealtimeThread()
   {
-    auto newObject = messengerForNewObjects.receiveLastMessage();
-    if (newObject) {
-      messengerForOldObjects.send(std::move(currentObjectStorage));
-      currentObjectStorage = std::move(newObject.value());
-      currentObjectPtr.store(currentObjectStorage.get(), std::memory_order_release);
+    auto head = messengerForNewObjects.receiveAllNodes();
+    if (head) {
+      std::swap(realtimeInstance, head->get());
+      messengerForOldObjects.sendMultiple(head);
     }
-    return currentObjectStorage.get();
+    return realtimeInstance.get();
   }
 
   /**
-   * Changes the object from a the non-realtime thread.
+   * Changes the object from the non-realtime thread.
    * @oaram change the std::function that creates the new version of the object
    */
-  void changeFromNonRealtimeThread(std::function<std::unique_ptr<Object>(Object const&)> const& change)
+  void change(std::function<std::unique_ptr<Object>(Object const&)> const& changer)
   {
+    auto const lock = std::lock_guard<std::mutex>(mutex);
     auto objectPtr = getFromNonRealtimeThread();
     if (!objectPtr)
       return;
-    auto newObject = change(*objectPtr);
-    set(std::move(newObject));
+    auto newObject = changer(*objectPtr);
+    lastObject = newObject.get();
+    send(std::move(newObject));
   }
 
   /**
@@ -68,27 +70,29 @@ public:
    * @oaram predicate the predicate used to decide if the change is to be applied
    * @return true if the predicate returned true and the change was applied, false otherwise
    */
-  bool changeFromNonRealtimeThreadIf(std::function<std::unique_ptr<Object>(Object const&)> const& change,
-                                     std::function<bool(Object const&)> const& predicate)
+  bool changeIf(std::function<std::unique_ptr<Object>(Object const&)> const& changer,
+                std::function<bool(Object const&)> const& predicate)
   {
+    auto const lock = std::lock_guard<std::mutex>(mutex);
     auto objectPtr = getFromNonRealtimeThread();
     if (!objectPtr)
       return false;
     if (predicate(*objectPtr)) {
-      auto newObject = change(*objectPtr);
-      set(std::move(newObject));
+      auto newObject = changer(*objectPtr);
+      lastObject = newObject.get();
+      send(std::move(newObject));
       return true;
     }
     return false;
   }
 
   /**
-   * Gets the object in use on the real-time thread form a non realtime thread.
+   * Gets the last version of the object.
    * @return a pointer to the object
    */
   Object* getFromNonRealtimeThread()
   {
-    return currentObjectPtr.load(std::memory_order_acquire);
+    return lastObject;
   }
 
   /**
@@ -98,18 +102,11 @@ public:
    */
   void set(std::unique_ptr<Object> newObject)
   {
-    lockfree::receiveAndHandleMessageStack(messengerForOldObjects, [](auto& object) { object.reset(); });
-    messengerForNewObjects.send(std::move(newObject));
-  }
-
-  /**
-   * Allocates message nodes.
-   * @param numNodesToPreallocate the number of nodes to allocate.
-   */
-  void allocateMessageNodes(int numNodesToPreallocate)
-  {
-    messengerForNewObjects.allocateNodes(numNodesToPreallocate);
-    messengerForOldObjects.allocateNodes(numNodesToPreallocate);
+    {
+      auto const lock = std::lock_guard<std::mutex>(mutex);
+      lastObject = newObject.get();
+    }
+    send(std::move(newObject));
   }
 
   /**
@@ -117,18 +114,24 @@ public:
    * @param object the object to hold
    * @param numNodesToPreallocate the number of nodes to allocate.
    */
-  explicit RealtimeObject(std::unique_ptr<Object> object, int numNodesToPreallocate = 128)
-    : currentObjectStorage(std::move(object))
+  explicit RealtimeObject(std::unique_ptr<Object> object)
+    : realtimeInstance(std::move(object))
   {
-    currentObjectPtr.store(currentObjectStorage.get(), std::memory_order_release);
-    allocateMessageNodes(numNodesToPreallocate);
+    lastObject=realtimeInstance.get();
   }
 
 private:
+  void send(std::unique_ptr<Object> newObject)
+  {
+    messengerForOldObjects.discardAndFreeAllMessages();
+    messengerForNewObjects.send(std::move(newObject));
+  }
+
   lockfree::Messenger<std::unique_ptr<Object>> messengerForNewObjects;
   lockfree::Messenger<std::unique_ptr<Object>> messengerForOldObjects;
-  std::unique_ptr<Object> currentObjectStorage;
-  std::atomic<Object*> currentObjectPtr{ nullptr };
+  std::unique_ptr<Object> realtimeInstance;
+  Object* lastObject{ nullptr };
+  std::mutex mutex;
 };
 
 } // namespace lockfree

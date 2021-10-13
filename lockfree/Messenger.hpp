@@ -204,12 +204,19 @@ public:
   /**
    * Sends a message already wrapped in a MessageNode. Non-blocking.
    * @param node the massage node to send.
-   * @return true if the message was sent using an already allocated node, false
-   * if a node was allocated
    */
   void send(MessageNode<T>* node)
   {
     lifo.push(node);
+  }
+
+  /**
+ * Sends a stack of message nodes. Non-blocking.
+ * @param head the head node of the stack.
+ */
+  void sendMultiple(MessageNode<T>* head)
+  {
+    lifo.push_multiple(head, head->last());
   }
 
   /**
