@@ -50,37 +50,33 @@ public:
   }
 
   /**
-   * Changes the object from a the non-realtime thread, making a copy, applying the change to the copy and sending it to
-   * the realtime thread. The change is a std::function<void(Object&)>.
-   * @oaram change an std::function that will apply the change
+   * Changes the object from a the non-realtime thread.
+   * @oaram change the std::function that creates the new version of the object
    */
-  void changeFromNonRealtimeThread(std::function<void(Object&)> const& change)
+  void changeFromNonRealtimeThread(std::function<std::unique_ptr<Object>(Object const&)> const& change)
   {
     auto objectPtr = getFromNonRealtimeThread();
     if (!objectPtr)
       return;
-    auto objectCopy = std::make_unique<Object>(*objectPtr);
-    change(*objectCopy);
-    set(std::move(objectCopy));
+    auto newObject = change(*objectPtr);
+    set(std::move(newObject));
   }
 
   /**
-   * Conditionally changes the object from a the non-realtime thread, making a copy, applying the change to the copy and
-   * sending it to the realtime thread, if a predicate returns true.
-   * @oaram change an std::function that will apply the change
+   * Conditionally changes the object from a the non-realtime thread.
+   * @oaram change the std::function that creates the new version of the object
    * @oaram predicate the predicate used to decide if the change is to be applied
    * @return true if the predicate returned true and the change was applied, false otherwise
    */
-  bool changeFromNonRealtimeThreadIf(std::function<void(Object&)> const& change,
+  bool changeFromNonRealtimeThreadIf(std::function<std::unique_ptr<Object>(Object const&)> const& change,
                                      std::function<bool(Object const&)> const& predicate)
   {
     auto objectPtr = getFromNonRealtimeThread();
     if (!objectPtr)
       return false;
     if (predicate(*objectPtr)) {
-      auto objectCopy = std::make_unique<Object>(*objectPtr);
-      change(*objectCopy);
-      set(std::move(objectCopy));
+      auto newObject = change(*objectPtr);
+      set(std::move(newObject));
       return true;
     }
     return false;
