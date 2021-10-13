@@ -96,6 +96,15 @@ public:
   }
 
   /**
+ * Gets the last version of the object.
+ * @return a pointer to the object
+ */
+  Object const* getFromNonRealtimeThread() const
+  {
+    return lastObject;
+  }
+
+  /**
    * Sets the object and it sends it to the real-time thread. Also frees any object that has been previously discarded
    * from the real-time thread.
    * @newObject the new version of the object
