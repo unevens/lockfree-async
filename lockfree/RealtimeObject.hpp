@@ -39,7 +39,7 @@ public:
    * back to the non real-time thread to be freed. Lock-free.
    * @return a pointer to the object
    */
-  Object* getFromRealtimeThread()
+  Object* getOnRealtimeThread()
   {
     auto head = messengerForNewObjects.receiveAllNodes();
     if (head) {
@@ -56,7 +56,7 @@ public:
   void change(std::function<std::unique_ptr<Object>(Object const&)> const& changer)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    auto objectPtr = getFromNonRealtimeThread();
+    auto objectPtr = getOnNonRealtimeThread();
     if (!objectPtr)
       return;
     auto newObject = changer(*objectPtr);
@@ -74,7 +74,7 @@ public:
                 std::function<bool(Object const&)> const& predicate)
   {
     auto const lock = std::lock_guard<std::mutex>(mutex);
-    auto objectPtr = getFromNonRealtimeThread();
+    auto objectPtr = getOnNonRealtimeThread();
     if (!objectPtr)
       return false;
     if (predicate(*objectPtr)) {
@@ -90,7 +90,7 @@ public:
    * Gets the last version of the object.
    * @return a pointer to the object
    */
-  Object* getFromNonRealtimeThread()
+  Object* getOnNonRealtimeThread()
   {
     return lastObject;
   }
@@ -99,7 +99,7 @@ public:
    * Gets the last version of the object.
    * @return a pointer to the object
    */
-  Object const* getFromNonRealtimeThread() const
+  Object const* getOnNonRealtimeThread() const
   {
     return lastObject;
   }
