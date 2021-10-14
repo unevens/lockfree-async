@@ -96,9 +96,9 @@ public:
   }
 
   /**
- * Gets the last version of the object.
- * @return a pointer to the object
- */
+   * Gets the last version of the object.
+   * @return a pointer to the object
+   */
   Object const* getFromNonRealtimeThread() const
   {
     return lastObject;
@@ -111,10 +111,8 @@ public:
    */
   void set(std::unique_ptr<Object> newObject)
   {
-    {
-      auto const lock = std::lock_guard<std::mutex>(mutex);
-      lastObject = newObject.get();
-    }
+    auto const lock = std::lock_guard<std::mutex>(mutex);
+    lastObject = newObject.get();
     send(std::move(newObject));
   }
 
@@ -126,7 +124,7 @@ public:
   explicit RealtimeObject(std::unique_ptr<Object> object)
     : realtimeInstance(std::move(object))
   {
-    lastObject=realtimeInstance.get();
+    lastObject = realtimeInstance.get();
   }
 
 private:
