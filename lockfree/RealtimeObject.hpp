@@ -35,17 +35,26 @@ class RealtimeObject final
 {
 public:
   /**
-   * Gets the object on the realtime thread. It updates it if a new version has been submitted, and send the old version
-   * back to the non real-time thread to be freed. Lock-free.
+   * Updates the object in use on the real-time thread to the last version produced. If such a version is received, the
+   * old version gets sent back to the non real-time thread to be freed. Lock-free.
    * @return a pointer to the object
    */
-  Object* getOnRealtimeThread()
+  Object* receiveChangesOnRealtimeThread()
   {
     auto head = messengerForNewObjects.receiveAllNodes();
     if (head) {
       std::swap(realtimeInstance, head->get());
       messengerForOldObjects.sendMultiple(head);
     }
+    return realtimeInstance.get();
+  }
+
+  /**
+   * Gets the object on the realtime thread.
+   * @return a pointer to the object
+   */
+  Object* getOnRealtimeThread()
+  {
     return realtimeInstance.get();
   }
 
